@@ -181,9 +181,9 @@ func (f *SobelFilter) Filter(img image.Image, current_frame int) {
 				char := fonts.PickCharOnLuminance(luminance)
 				fonts.RenderChar(char, rgba, rect, clr)
 			} else {
-				_, clr := quantizeRect(rgba, &rect)
+				_, _ = quantizeRect(rgba, &rect)
 				char := fonts.PickCharOnAngle(avgDir)
-				fonts.RenderChar(char, rgba, rect, clr)
+				fonts.RenderChar(char, rgba, rect, color.RGBA{R: 255, G: 0, B: 0, A: 255})
 			}
 		}
 	}

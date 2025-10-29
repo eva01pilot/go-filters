@@ -1,14 +1,17 @@
 package main
 
 import (
-	_ "fmt"
+	"fmt"
 	"go-filters/filters"
 	"go-filters/fonts"
 	"go-filters/video"
 	"image"
 	"image/png"
 	"io"
+	"os"
 	"os/exec"
+
+	"github.com/spf13/cobra"
 )
 
 type FrameRouter struct {
@@ -35,10 +38,27 @@ func (r *FrameRouter) Process(img image.Image, current_frame int) {
 
 }
 
-func main() {
+var rootCmd = &cobra.Command{
+	Use:   "go-filters [text]",
+	Short: "CLI that applies filters on mp4 video frames and outputs new one",
+	Args:  cobra.ArbitraryArgs,
+	Run:   runCliApp,
+}
 
-	fonts.CreateASCIISprites(8)
+var input *string
+var output *string
 
+func init() {
+	input = rootCmd.Flags().String("input", "", "Path to input mp4 video file")
+	output = rootCmd.Flags().String("output", "", "Path to output mp4 video file")
+}
+
+func runCliApp(command *cobra.Command, args []string) {
+
+	_, err := os.Stat(*output)
+	if err == nil {
+		os.Remove(*output)
+	}
 	cmd := exec.Command("ffmpeg",
 		"-f", "image2pipe",
 		"-vcodec", "png",
@@ -49,7 +69,7 @@ func main() {
 		"-crf", "18",
 		"-preset", "slow",
 		"-x264-params", "aq-mode=3:aq-strength=1.2:chroma_qp_offset=-2",
-		"output.mp4")
+		*output)
 	pipe, err := cmd.StdinPipe()
 	if err != nil {
 		panic(err)
@@ -61,17 +81,11 @@ func main() {
 	}, 8)
 
 	router := FrameRouter{reader: pipe, channel: writech}
-	//channel_shift := filters.ChannelShiftFilter{}
-	//channel_shift.Configure(20, 20, 20)
-	//wave_filter := filters.WaveFilter{}
-	//
 
-	//ascii_filter := filters.AsciiFilter{}
-	//
 	sobelFilter := filters.SobelFilter{}
 	router.dynamic_filters = append(router.dynamic_filters, &sobelFilter)
 
-	numFrames, err := video.GetFrameCount("/home/ilya/Downloads/miku.mp4")
+	numFrames, err := video.GetFrameCount(*input)
 	if err != nil {
 		panic(err)
 	}
@@ -110,7 +124,7 @@ func main() {
 		panic(err)
 	}
 
-	err = video.Decode("/home/ilya/Downloads/miku.mp4", &router)
+	err = video.Decode(*input, &router)
 	if err != nil {
 		panic(err)
 	}
@@ -124,4 +138,14 @@ func main() {
 	pipe.Close()
 
 	cmd.Wait()
+
+}
+func main() {
+
+	fonts.CreateASCIISprites(8)
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
 }
