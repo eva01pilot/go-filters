@@ -52,8 +52,9 @@ func Decode(video_path string, processor FrameProcessor) error {
 
 	cmd := exec.Command(
 		"ffmpeg",
-		"-ss", "10", // ⏩ start at 10 seconds
-		"-t", "10", // ⏱ process 10 seconds duration
+		"-hwaccel", "auto",
+		"-ss", "10",
+		"-t", "10",
 		"-i", video_path,
 		"-f", "image2pipe",
 		"-vcodec", "png",

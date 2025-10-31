@@ -2,6 +2,7 @@ package filters
 
 import (
 	_ "fmt"
+	"go-filters/filters/edge"
 	"go-filters/fonts"
 	"go-filters/helpers"
 	"image"
@@ -86,25 +87,6 @@ func (f *WaveFilter) Filter(img image.Image, frame_index int) {
 
 }
 
-type AsciiFilter struct {
-}
-
-func (f *AsciiFilter) Filter(img image.Image, current_frame int) {
-	rgba := img.(*image.RGBA)
-	bounds := rgba.Bounds()
-
-	for x := bounds.Min.X; x < bounds.Max.X; x += RECT_SIZE {
-		for y := bounds.Min.Y; y < bounds.Max.Y; y += RECT_SIZE {
-			rect := image.Rect(x, y, x+RECT_SIZE, y+RECT_SIZE)
-			luminance, clr := quantizeRect(rgba, &rect)
-
-			char := fonts.PickCharOnLuminance(luminance)
-			fonts.RenderChar(char, img, rect, clr)
-		}
-	}
-
-}
-
 type GrayscaleFilter struct{}
 
 func (f *GrayscaleFilter) Filter(img image.Image, current_frame int) {
@@ -126,15 +108,13 @@ func (f *GrayscaleFilter) Filter(img image.Image, current_frame int) {
 
 }
 
-type Edge struct {
-	Magnitude float64
-	Direction float64
+type AsciiFilter struct {
 }
 
-type SobelFilter struct{}
-
-func (f *SobelFilter) Filter(img image.Image, current_frame int) {
+func (f *AsciiFilter) Filter(img image.Image, current_frame int) {
 	bounds := img.Bounds()
+
+	edgeDetector := edge.SobelEdgeDetector{}
 
 	copyImg := helpers.CopyImage(img)
 
@@ -143,29 +123,7 @@ func (f *SobelFilter) Filter(img image.Image, current_frame int) {
 
 	rgba := img.(*image.RGBA)
 
-	var edgesMap = make(map[image.Point]Edge)
-
-	for x := bounds.Min.X; x < bounds.Max.X; x++ {
-		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			patch, _ := getPatchForXY(copyImg, x, y)
-			gx := [9]int{-1, 0, 1, -2, 0, 2, -1, 0, 1}
-			gy := [9]int{-1, -2, -1, 0, 0, 0, 1, 2, 1}
-
-			point := image.Point{X: x, Y: y}
-
-			Gx := float64(helpers.DotProduct(patch, gx))
-			Gy := float64(helpers.DotProduct(patch, gy))
-
-			direction := math.Atan2(float64(Gy), float64(Gx))
-
-			magnitude := math.Sqrt(Gx*Gx + Gy*Gy)
-
-			edge := Edge{Magnitude: magnitude, Direction: direction}
-			edgesMap[point] = edge
-
-		}
-
-	}
+	edgesMap := edgeDetector.FindEdges(img)
 
 	for x := bounds.Min.X; x < bounds.Max.X; x += RECT_SIZE {
 		for y := bounds.Min.Y; y < bounds.Max.Y; y += RECT_SIZE {
@@ -174,84 +132,71 @@ func (f *SobelFilter) Filter(img image.Image, current_frame int) {
 
 			rect := image.Rectangle{Min: minPoint, Max: maxPoint}
 
-			avgMag, avgDir := quantizeBasedOnEdges(&rect, edgesMap)
+			avgMag, avgDir := edge.QuantizeBasedOnEdges(&rect, edgesMap)
 
-			if avgMag < 80 {
+			if avgMag < 70 {
 				luminance, clr := quantizeRect(rgba, &rect)
 				char := fonts.PickCharOnLuminance(luminance)
 				fonts.RenderChar(char, rgba, rect, clr)
 			} else {
-				_, _ = quantizeRect(rgba, &rect)
+				_, clr := quantizeRect(rgba, &rect)
 				char := fonts.PickCharOnAngle(avgDir)
-				fonts.RenderChar(char, rgba, rect, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+				fonts.RenderChar(char, rgba, rect, clr)
 			}
 		}
 	}
 
 }
 
-func getPatchForXY(img *image.RGBA, x, y int) ([9]int, map[int]image.Point) {
-	var patch [9]int
-	var indexToPointMap = make(map[int]image.Point)
-	currIndex := 0
-	for x1 := x - 1; x1 < x+2; x1++ {
-		for y1 := y - 1; y1 < y+2; y1++ {
-			point := image.Point{X: x1, Y: y1}
-			if point.In(img.Bounds()) {
-				r, _, _, _ := img.At(x1, y1).RGBA()
+type GaussianBlur struct{}
 
-				intensity := float32(r >> 8)
+func (f *GaussianBlur) Filter(img image.Image, current_frame int) {
+	bounds := img.Bounds()
+	rgba := img.(*image.RGBA)
 
-				patch[currIndex] = int(intensity)
-
-				indexToPointMap[currIndex] = point
-
-			} else {
-				patch[currIndex] = 0
-			}
-
-			currIndex++
-		}
-	}
-
-	return patch, indexToPointMap
-
-}
-
-func quantizeBasedOnEdges(rect *image.Rectangle, edgesMap map[image.Point]Edge) (avgMag, avgDir float64) {
-	bounds := rect.Bounds()
-
-	sumSin, sumCos := 0.0, 0.0
-	sumMag := 0.0
-	var count int
+	kernel := GenerateGaussianKernel9(2.0)
 
 	for x := bounds.Min.X; x < bounds.Max.X; x++ {
 		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			point := image.Point{X: x, Y: y}
-			edge, ok := edgesMap[point]
-			if !ok {
-				continue
+			intensities, _ := edge.GetPatchForXY(rgba, x, y)
+
+			var sum float64
+			for i := 0; i < 9; i++ {
+				sum += float64(intensities[i]) * kernel[i]
 			}
 
-			if edge.Magnitude < 80 {
-				continue
+			if sum > 255 {
+				sum = 255
 			}
 
-			sumMag += edge.Magnitude
-			sumSin += math.Sin(edge.Direction)
-			sumCos += math.Cos(edge.Direction)
-			count++
+			conv := uint8(sum)
+			newColor := color.RGBA{R: conv, G: conv, B: conv, A: 255}
+			rgba.Set(x, y, newColor)
 		}
 	}
+}
 
-	if count == 0 {
-		return 0, 0 // no valid edges in this block
+// GenerateGaussianKernel1D creates a 1D Gaussian kernel of given size and sigma.
+// The kernel is centered, normalized (sums to 1), and suitable for separable convolution.
+func GenerateGaussianKernel9(sigma float64) [9]float64 {
+	const size = 9
+	const radius = size / 2
+	var kernel [size]float64
+	var sum float64
+
+	for i := -radius; i <= radius; i++ {
+		exponent := -(float64(i * i)) / (2 * sigma * sigma)
+		value := math.Exp(exponent) / (math.Sqrt(2*math.Pi) * sigma)
+		kernel[i+radius] = value
+		sum += value
 	}
 
-	avgMag = sumMag / float64(count)
-	avgDir = math.Atan2(sumSin, sumCos)
+	// Normalize so that total sum = 1
+	for i := 0; i < size; i++ {
+		kernel[i] /= sum
+	}
 
-	return avgMag, avgDir
+	return kernel
 }
 
 func quantizeRect(img *image.RGBA, rect *image.Rectangle) (float32, color.RGBA) {

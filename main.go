@@ -82,8 +82,11 @@ func runCliApp(command *cobra.Command, args []string) {
 
 	router := FrameRouter{reader: pipe, channel: writech}
 
-	sobelFilter := filters.SobelFilter{}
-	router.dynamic_filters = append(router.dynamic_filters, &sobelFilter)
+	grayScale := filters.GrayscaleFilter{}
+	gaussianBlur := filters.GaussianBlur{}
+	asciiFilter := filters.AsciiFilter{}
+
+	router.dynamic_filters = append(router.dynamic_filters, &grayScale, &gaussianBlur, &asciiFilter)
 
 	numFrames, err := video.GetFrameCount(*input)
 	if err != nil {
